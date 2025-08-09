@@ -1,0 +1,1 @@
+# Deep-Ritz-for-PDE
