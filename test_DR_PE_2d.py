@@ -43,17 +43,44 @@ class RitzModel(nn.Module):
         u_theta = self.nn_u(x)            # (N,1)
         return u_theta * phi(x).view(-1,1)
 
-def energy_loss(model, x):
+# def energy_loss(model, x):
+#     x = x.clone().detach().requires_grad_(True)
+#     u = model(x)                       
+#     u_x = torch.autograd.grad(outputs=u, inputs=x, 
+#                               grad_outputs=torch.ones_like(u),
+#                               create_graph=True, retain_graph=True)[0]
+#     grad_sq = (u_x**2).sum(dim=1)      
+#     J1 = 0.5 * torch.mean(grad_sq)     
+#     J2 = torch.mean(f_source(x) * u.squeeze(1))  
+#     energy = J1 - J2
+#     return energy
+
+
+def pinn_loss(model, x):
     x = x.clone().detach().requires_grad_(True)
     u = model(x)                       
     u_x = torch.autograd.grad(outputs=u, inputs=x, 
                               grad_outputs=torch.ones_like(u),
                               create_graph=True, retain_graph=True)[0]
-    grad_sq = (u_x**2).sum(dim=1)      
-    J1 = 0.5 * torch.mean(grad_sq)     
-    J2 = torch.mean(f_source(x) * u.squeeze(1))  
-    energy = J1 - J2
-    return energy
+
+    # second derivative (Laplacian)
+    u_xx = torch.autograd.grad(
+        outputs=u_x[:,0], inputs=x,
+        grad_outputs=torch.ones_like(u_x[:,0]),
+        create_graph=True, retain_graph=True
+    )[0][:, 0]
+    u_yy = torch.autograd.grad(
+        outputs=u_x[:,1], inputs=x,
+        grad_outputs=torch.ones_like(u_x[:,1]),
+        create_graph=True, retain_graph=True
+    )[0][:, 1]
+    laplace_u = u_xx + u_yy
+
+    f_val = f_source(x)
+    residual = -laplace_u - f_val
+    loss_pde = torch.mean(residual**2)
+
+    return loss_pde
 
 def sample_sobol(n):
     engine = SobolEngine(dimension=2, scramble=True)
@@ -65,7 +92,7 @@ def train(model, epochs=2000, batch_size=4096, lr=1e-3, use_lbfgs=True):
     losses = []
     for ep in range(1, epochs+1):
         x = sample_sobol(batch_size).requires_grad_(True)
-        loss = energy_loss(model, x)
+        loss = pinn_loss(model, x)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -77,7 +104,7 @@ def train(model, epochs=2000, batch_size=4096, lr=1e-3, use_lbfgs=True):
         def closure():
             optimizer_lbfgs.zero_grad()
             x = sample_sobol(batch_size).requires_grad_(True)
-            loss_lb = energy_loss(model, x)
+            loss_lb = pinn_loss(model, x)
             loss_lb.backward()
             return loss_lb
         optimizer_lbfgs = optim.LBFGS(model.parameters(), lr=0.5, max_iter=200)
@@ -87,10 +114,10 @@ def train(model, epochs=2000, batch_size=4096, lr=1e-3, use_lbfgs=True):
 # # usage example:
 # model = RitzModel().to(device)
 # losses = train(model, epochs=2000, batch_size=4096, lr=1e-3, use_lbfgs=True)
-# torch.save(model.state_dict(), f'model_ritz.pth')
+# torch.save(model.state_dict(), f'model_pinn.pth')
 
 model = RitzModel()
-model.load_state_dict(torch.load(f'model_ritz.pth', \
+model.load_state_dict(torch.load(f'model_pinn.pth', \
                                      weights_only=False))
 
 # evaluate on grid
