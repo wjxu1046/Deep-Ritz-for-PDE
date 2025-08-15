@@ -82,6 +82,34 @@ def pinn_loss(model, x):
 
     return loss_pde
 
+def galerkin_loss(model, x, num_test_funcs=3):
+   
+    x = x.clone().detach().requires_grad_(True)
+    u = model(x) 
+
+  
+    grad_u = torch.autograd.grad(u, x, grad_outputs=torch.ones_like(u),
+                                 create_graph=True)[0]
+
+    loss_terms = []
+
+    # 多个测试函数
+    for i in range(1, num_test_funcs+1):
+        for j in range(1, num_test_funcs+1):
+            v = torch.sin(i *torch.pi *  x[:, 0]) * torch.sin(j * torch.pi * x[:, 1])
+            #v = torch.cos(i * pi * x[:, 0]) * torch.cos(j * pi * x[:, 1])
+            v = v.view(-1, 1)
+
+            grad_v = torch.autograd.grad(v, x, grad_outputs=torch.ones_like(v),
+                                         create_graph=True)[0]
+
+            lhs = torch.mean((grad_u * grad_v).sum(dim=1))  
+            rhs = torch.mean(f_source(x) * v.squeeze(1)) 
+            loss_terms.append((lhs - rhs)**2)
+
+    return torch.mean(torch.stack(loss_terms))
+
+
 def sample_sobol(n):
     engine = SobolEngine(dimension=2, scramble=True)
     return engine.draw(n).to(device)
@@ -158,3 +186,4 @@ ax3.set_title("Absolute Error $|u_{pre} - u_{exact}|$")
 
 plt.tight_layout()
 plt.show()
+
